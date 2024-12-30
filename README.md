@@ -30,7 +30,7 @@ A streamlined Windows browser built with WebView2 technology, offering a native 
 ```shell
 git clone https://github.com/abbychau/ForumBrowser.git
 cd ForumBrowser
-dotnet build
+# Open the solution in Visual Studio
 ```
 
 ## License
