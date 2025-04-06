@@ -1,10 +1,5 @@
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.Tab;
-using System.Security.Policy;
-using System;
-
 namespace ForumBrowser
 {
     public partial class Form1 : Form
@@ -15,6 +10,34 @@ namespace ForumBrowser
         {
             InitializeComponent();
             settings = new(this);
+
+            // Initialize the WebView2 environment when the form is created
+            _ = InitializeWebView2Environment();
+        }
+
+        private async Task InitializeWebView2Environment()
+        {
+            string browserOptions = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll";
+            browserOptions += " --disable-background-networking ";
+            if (settings.AllowCORS)
+            {
+                browserOptions += " --disable-web-security";
+            }
+            if (settings.UnlimitedStorage)
+            {
+                browserOptions += " --disable-features=ElasticOverscroll";
+            }
+
+            string cacheDir = Environment.CurrentDirectory + @"\Cache\";
+            await WebView2Manager.InitializeEnvironmentAsync(browserOptions, cacheDir);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+
+            // Clean up WebView2 resources when the form is closing
+            WebView2Manager.Cleanup();
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -54,7 +77,7 @@ namespace ForumBrowser
                     txtUrl.Text = "about:blank";
                 }
             };
-            
+
 
             // on tab middle click, close the tab
             tabControl.MouseClick += (s, e) =>
@@ -65,6 +88,13 @@ namespace ForumBrowser
                     {
                         if (tabControl.GetTabRect(i).Contains(e.Location))
                         {
+                            // Get the tab to close
+                            TabPage tabToClose = tabControl.TabPages[i];
+
+                            // Dispose WebView2 before removing the tab
+                            DisposeWebView2InTab(tabToClose);
+
+                            // Remove the tab
                             tabControl.TabPages.RemoveAt(i);
                             break;
                         }
@@ -78,12 +108,14 @@ namespace ForumBrowser
                 }
             };
 
-            //on tab close, clear histories[webview2]
+            // Handle tab removal through TabControl.ControlRemoved
+
+            // Handle tab removal through TabControl.ControlRemoved
             tabControl.ControlRemoved += (s, e) =>
             {
-                if (e.Control is WebView2 webview2)
+                if (e.Control is TabPage tabPage)
                 {
-                    histories.Remove(webview2);
+                    DisposeWebView2InTab(tabPage);
                 }
             };
 
@@ -97,6 +129,7 @@ namespace ForumBrowser
                     SetFormTitle(webview2.CoreWebView2.DocumentTitle);
                 }
             };
+
             bool boolTxtFirstFocus = false;
             txtUrl.LostFocus += (s, e) =>
             {
@@ -188,6 +221,35 @@ namespace ForumBrowser
             throw new NotImplementedException();
         }
 
+        /// <summary>
+        /// Properly disposes a WebView2 control contained in a TabPage
+        /// </summary>
+        private void DisposeWebView2InTab(TabPage tabPage)
+        {
+            if (tabPage != null && tabPage.Controls.Count > 0 && tabPage.Controls[0] is WebView2 webview2)
+            {
+                // Remove from histories dictionary
+                histories.Remove(webview2);
+
+                // Explicitly dispose the WebView2 control
+                try
+                {
+                    // Cancel any pending navigation
+                    if (webview2.CoreWebView2 != null)
+                    {
+                        try { webview2.CoreWebView2.NavigateToString("about:blank"); } catch { }
+                    }
+                    webview2.Source = new Uri("about:blank");
+                    webview2.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    // Log exception if needed
+                    System.Diagnostics.Debug.WriteLine($"Error disposing WebView2: {ex.Message}");
+                }
+            }
+        }
+
         private void SetFormTitle(string title)
         {
             this.Text = title + " - ForumBrowser";
@@ -211,34 +273,9 @@ namespace ForumBrowser
             {
                 Dock = DockStyle.Fill
             };
-            /* disabled features:
-             * msWebOOUI,msPdfOOUI: ¸T¤î°g§A¿ï³æ
-             * 
-             */
-            string browserOptions = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll";
-            browserOptions += " --disable-background-networking "; //--user-agent=\"ForumBrowser 1.0\"
-            if (settings.AllowCORS)
-            {
-                browserOptions += " --disable-web-security";
-            }
-            if (settings.UnlimitedStorage)
-            {
-                browserOptions += " --disable-features=ElasticOverscroll";
-            }
-            string cacheDir = Environment.CurrentDirectory + @"\Cache\";
-            Directory.CreateDirectory(cacheDir);
-            var options = new CoreWebView2EnvironmentOptions(
-                browserOptions,
-                null,
-                null,
-                settings.AllowSSO,
-                null
-            );
-            var env = await CoreWebView2Environment.CreateAsync(null, cacheDir, options);
 
-            await webview2.EnsureCoreWebView2Async(
-                env
-            );
+            // Use the shared WebView2 environment
+            await WebView2Manager.InitializeWebView2Async(webview2);
             histories[webview2] = [];
 
             //pass hotkey to form1
@@ -258,10 +295,17 @@ namespace ForumBrowser
 
                 if (e.KeyCode == Keys.W)
                 {
-
                     if (tabControl.SelectedTab != null)
-                        tabControl.TabPages.Remove(tabControl.SelectedTab);
+                    {
+                        // Get the tab to close
+                        TabPage tabToClose = tabControl.SelectedTab;
 
+                        // Dispose WebView2 before removing the tab
+                        DisposeWebView2InTab(tabToClose);
+
+                        // Remove the tab
+                        tabControl.TabPages.Remove(tabToClose);
+                    }
                 }
 
                 //ctrl+1, ctrl+2, ctrl+3, ctrl+4, ctrl+5, ctrl+6, ctrl+7, ctrl+8, ctrl+9
@@ -292,15 +336,15 @@ namespace ForumBrowser
             tab.Controls.Add(webview2);
             url = ConvertToValidUrl(url);
             webview2.Source = new Uri(url);
-            
+
             //one webview2 get focus, hide history context menu
             webview2.GotFocus += (s, e) =>
             {
                 contextMenuStripHistory.Hide();
             };
 
-            //WebView2.NavigationCompleted ¡÷ is raised when the WebView has completely loaded(body.onload has been raised) or loading stopped with error.
-            //WebView2.CoreWebView2.DOMContentLoaded ¡÷ is raised when the initial html document has been parsed.This aligns with the the document's DOMContentLoaded event in html. (This one is available starting from 1.0.705.50.)
+            //WebView2.NavigationCompleted ï¿½ï¿½ is raised when the WebView has completely loaded(body.onload has been raised) or loading stopped with error.
+            //WebView2.CoreWebView2.DOMContentLoaded ï¿½ï¿½ is raised when the initial html document has been parsed.This aligns with the the document's DOMContentLoaded event in html. (This one is available starting from 1.0.705.50.)
             // update progress bar
             webview2.CoreWebView2.NavigationStarting += (s, e) =>
             {
@@ -317,6 +361,9 @@ namespace ForumBrowser
                 toolStripProgressBar1.Value += 45;
             };
 
+            //prevent memory leak when tab is closed
+
+
             webview2.CoreWebView2.DOMContentLoaded += (s, e) =>
             {
                 toolStripProgressBar1.Value += 45;
@@ -325,7 +372,7 @@ namespace ForumBrowser
             {
                 toolStripStatusLabel2.Text = "ContentLoaded";
             };
-            //ContextMenuRequested 
+            //ContextMenuRequested
             webview2.CoreWebView2.ContextMenuRequested += (s, args) =>
             {
                     var newItem = webview2.CoreWebView2.Environment.CreateContextMenuItem(
@@ -380,13 +427,13 @@ namespace ForumBrowser
                 txt = txt == null ? "" : txt;
                 toolStripStatusLabel1.Text = txt;
             };
-            //WebResourceRequested 
+            //WebResourceRequested
             webview2.CoreWebView2.WebResourceRequested += (s, e) =>
             {
                 //log to toolstrip
                 toolStripStatusLabel1.Text = "Requesting " + e.Request.Uri;
             };
-            //WebResourceResponseReceived 
+            //WebResourceResponseReceived
             webview2.CoreWebView2.WebResourceResponseReceived += (s, e) =>
             {
                 //log to toolstrip
@@ -400,7 +447,7 @@ namespace ForumBrowser
 
             tabControl.SelectedTab = tab;
 
-            await webview2.EnsureCoreWebView2Async(null);
+            // No need to call EnsureCoreWebView2Async again as it's already initialized
             // add to webview2.CoreWebView2.NewWindowRequested
             webview2.CoreWebView2.NewWindowRequested += (s, e) =>
             {
@@ -534,12 +581,30 @@ namespace ForumBrowser
         {
             // this will close all tabs except the below the menu
             int index = tabControl.SelectedIndex;
+
+            // Close tabs after the selected tab
             for (int i = tabControl.TabPages.Count - 1; i > index; i--)
             {
+                // Get the tab to close
+                TabPage tabToClose = tabControl.TabPages[i];
+
+                // Dispose WebView2 before removing the tab
+                DisposeWebView2InTab(tabToClose);
+
+                // Remove the tab
                 tabControl.TabPages.RemoveAt(i);
             }
+
+            // Close tabs before the selected tab
             for (int i = index - 1; i >= 0; i--)
             {
+                // Get the tab to close
+                TabPage tabToClose = tabControl.TabPages[i];
+
+                // Dispose WebView2 before removing the tab
+                DisposeWebView2InTab(tabToClose);
+
+                // Remove the tab
                 tabControl.TabPages.RemoveAt(i);
             }
         }
