@@ -51,12 +51,12 @@ namespace ForumBrowser
             {
                 int _padding = 5;
                 tabControl.Left = _padding;
-                tabControl.Width = this.Width - (20 + _padding);
-                tabControl.Height = this.Height - 95;
+                tabControl.Width = Width - (20 + _padding);
+                tabControl.Height = Height - 95;
                 int countOfToolStripItems = toolStrip1.Items.Count;
                 int toolStripItemWidth = toolStrip1.Items[0].Width;
                 //txtUrl.Left = countOfToolStripItems * 30;
-                txtUrl.Width = this.Width - (countOfToolStripItems * toolStripItemWidth + 35);
+                txtUrl.Width = Width - (countOfToolStripItems * toolStripItemWidth + 35);
             }
 
             //form1 resize callback
